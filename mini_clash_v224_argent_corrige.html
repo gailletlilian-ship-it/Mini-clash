@@ -1,0 +1,1814 @@
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Mini Clash V222</title>
+<style>
+body{margin:0;background:#111;color:white;font-family:Arial}
+#menu,#units,#gameScreen{display:none}
+#menu{display:block;text-align:center;padding:20px}
+button{padding:8px;margin:3px}
+#ui{position:fixed;top:0;left:0;right:0;bottom:0;background:transparent;padding:0;z-index:5;pointer-events:none}
+canvas{display:block;margin:auto;background:#5fbf5f}
+.unitBtn.active{outline:2px solid gold}
+</style>
+</head>
+<body>
+<div id="menu">
+<h1>⚔️ MINI CLASH V222 ⚔️</h1>
+<button onclick="show('game')">🎮 Jouer</button>
+<button onclick="show('units')">📖 Unités</button><button onclick="show('shop')">🏪 Boutique</button><br><span id="diamondsLabel">💎 0</span><br><h3>🏆 Points : <span id='pointsLabel'>0</span></h3><button onclick='saveGame(true)'>💾 Sauvegarder</button><button onclick='newGame()'>🔄 Nouvelle Partie</button><button onclick='resetAccount()'>🗑️ Réinitialiser Compte</button><br><br>
+<input id='codeInput' maxlength='20' placeholder='Code cadeau'>
+<button onclick='redeemCode()'>🎁 Valider</button><br><br>Compte : <span id='accountLabel'>1</span><br><button onclick='switchAccount(1)'>Compte 1</button><button onclick='switchAccount(2)'>Compte 2</button><br><button onclick='changePseudo()'>👤 Pseudo</button><button onclick='showProfile()'>📊 Profil</button><button onclick='showTitles()'>🎖️ Titres</button><button onclick='showAchievements()'>🏅 Succès</button><button onclick='showRanking()'>🏆 Classement</button><br><span id='pseudoLabel'></span><br><span id='leagueLabel'></span><br><span id='rankLabel'></span>
+</div>
+
+<div id="units">
+<h2>Gestion équipe (6 max)</h2>
+<div id="teamInfo"></div>
+<div id="unitList"></div>
+<button onclick="show('menu')">⬅ Retour</button>
+</div>
+
+
+<div id="shop">
+<h2>🏪 Boutique</h2>
+<button onclick="buyChest(20)">📦 Commun (20💎)</button>
+<button onclick="buyChest(80)">📦 Rare (80💎)</button>
+<button onclick="buyChest(200)">📦 Légendaire (200💎)</button>
+<br><button onclick="show('menu')">⬅ Retour</button>
+<div id="shopReward"></div>
+<div style="margin-top:10px;border:1px solid #555;padding:6px">
+<b>📦 Chances des coffres</b><br><br>
+📦 Commun : ⚪ 85% 🔵 14% 🟣 1%<br>
+📦 Rare : ⚪ 60% 🔵 34% 🟣 5,5% 🟠 0,5%<br>
+📦 Légendaire : 🔵 40% 🟣 58% 🟠 2%
+</div>
+</div>
+<div id="gameScreen">
+<div id="ui">
+<div style="position:fixed;top:8px;left:8px;color:white;font-weight:bold;font-size:28px;text-shadow:2px 2px 2px black;pointer-events:none">
+💰 <span id="goldLabel">30</span>
+⭐ <span id="scoreLabel">0</span>
+💎 <span id="crystalLabel">0</span>
+🤖 <span id="aiLabel">Simple</span>
+</div>
+
+<button onclick="leaveMatch()" style="position:fixed;top:8px;right:8px;pointer-events:auto;font-size:28px;padding:12px">🏠</button>
+
+<div style="position:fixed;left:8px;top:120px;pointer-events:auto">
+<button onclick="selectedLane=0" style="font-size:28px;padding:12px 18px">⬆️</button><br>
+<button onclick="selectedLane=1" style="font-size:28px;padding:12px 18px">⬇️</button>
+</div>
+
+<div id="spawnBar" style="position:fixed;bottom:8px;left:50%;transform:translateX(-50%);pointer-events:auto;font-size:24px"></div>
+</div>
+<canvas id="game" width="1200" height="650"></canvas>
+</div>
+
+<script>
+
+function leaveMatch(){
+ if(gameScreen.style.display==='block' && !gameOver){
+   if(confirm('⚠️ Quitter la partie ?\n\nDéfaite automatique et -30 points.')){
+      points=Math.max(0,points-30);
+      gameOver=true;
+      losses++; localStorage.setItem(accKey('losses'),losses); gameResult='💀 ABANDON'; winStreak=0; localStorage.setItem(accKey('winStreak'),winStreak); localStorage.setItem(accKey('in_match'),'0');
+      saveGame();
+      setTimeout(()=>syncSupabase(),500);
+   }
+ }else{
+   show('menu');
+ }
+}
+
+
+
+let currentAccount=localStorage.getItem('mc_current_account')||'1';
+function accKey(k){return 'mc_acc'+currentAccount+'_'+k;}
+
+function ensurePseudo(){
+ let name=localStorage.getItem(accKey('player_name'));
+ let tag=localStorage.getItem(accKey('player_tag'));
+ if(!name){
+   name='Joueur';
+   localStorage.setItem(accKey('player_name'),name);
+ }
+ if(!tag){
+   tag='#'+Math.floor(1000+Math.random()*9000);
+   localStorage.setItem(accKey('player_tag'),tag);
+ }
+}
+function getPseudo(){
+ ensurePseudo();
+ return localStorage.getItem(accKey('player_name'))+localStorage.getItem(accKey('player_tag'));
+}
+function changePseudo(){
+ ensurePseudo();
+ let n=prompt('Choisis ton pseudo',localStorage.getItem(accKey('player_name')));
+ if(!n) return;
+ localStorage.setItem(accKey('player_name'),n.substring(0,20));
+}
+
+function switchAccount(n){
+ currentAccount=String(n);
+ localStorage.setItem('mc_current_account',currentAccount);
+ location.reload();
+}
+
+async function resetAccount(){
+ if(!confirm('Supprimer toute la sauvegarde du compte actuel ?')) return;
+
+ ['levels','team','points','diamonds','unlocked','wins','losses','bestScore','winStreak','bestWinStreak','achievements','ach_list','titles','selectedTitle'].forEach(k=>{
+   localStorage.removeItem(accKey(k));
+ });
+
+ points=0;
+ diamonds=0;
+ wins=0;
+ losses=0;
+ bestScore=0;
+ winStreak=0;
+ bestWinStreak=0;
+ achievements=0;
+ unlockedTitles=[];
+ selectedTitle='';
+ unlockedAchievements.length=0;
+
+ localStorage.setItem(accKey('bestScore'),'0');
+ localStorage.setItem(accKey('bestWinStreak'),'0');
+ localStorage.setItem(accKey('wins'),'0');
+ localStorage.setItem(accKey('losses'),'0');
+ localStorage.setItem(accKey('achievements'),'0');
+ localStorage.setItem(accKey('winStreak'),'0');
+
+ Object.keys(levels).forEach(k=>levels[k]=1);
+ equipped=['knight','archer','giant','dragon','ninja','kamikaze'];
+ localStorage.setItem(accKey('levels'),JSON.stringify(levels));
+ localStorage.setItem(accKey('team'),JSON.stringify(equipped));
+
+ try{ await syncSupabase(); }catch(e){}
+
+ alert('Compte réinitialisé et synchronisé !');
+ location.reload();
+}
+
+
+
+async function redeemCode(){
+ const code=document.getElementById('codeInput').value.trim();
+
+ const ADMIN_TAGS=['#5669','#2614'];
+ const currentTag=localStorage.getItem(accKey('player_tag')) || '';
+ const adminCodes=[
+ '581264','684357','951826','742918','SUCCESALL',
+ '384921','715846','268593','907314','641875',
+ '827461','593718','764239','918472','375981','112358'
+ ];
+
+ if(adminCodes.includes(code) && !ADMIN_TAGS.includes(currentTag)){
+   alert('❌ Code réservé à l\'administrateur');
+   return;
+ }
+
+ try{
+   const r=await fetch(
+     SUPABASE_URL+'gift_codes?code=eq.'+encodeURIComponent(code)+'&select=*',
+     {headers:{
+       'apikey':SUPABASE_PUBLISHABLE_KEY,
+       'Authorization':'Bearer '+SUPABASE_PUBLISHABLE_KEY
+     }}
+   );
+
+   const rows=await r.json();
+
+   if(Array.isArray(rows) && rows.length>0){
+      const gift=rows[0];
+
+      if(!gift.active){
+         alert('❌ Code désactivé');
+         return;
+      }
+
+      if((gift.uses||0) >= (gift.max_uses||1)){
+         alert('❌ Code déjà utilisé');
+         return;
+      }
+
+      if(gift.reward_type==='diamonds') diamonds += gift.reward_value;
+      if(gift.reward_type==='points') points += gift.reward_value;
+
+      await fetch(
+        SUPABASE_URL+'gift_codes?id=eq.'+gift.id,
+        {
+          method:'PATCH',
+          headers:{
+            'apikey':SUPABASE_PUBLISHABLE_KEY,
+            'Authorization':'Bearer '+SUPABASE_PUBLISHABLE_KEY,
+            'Content-Type':'application/json'
+          },
+          body:JSON.stringify({uses:(gift.uses||0)+1})
+        }
+      );
+
+      saveGame();
+      alert('🎁 Récompense obtenue !');
+      return;
+   }
+ }catch(e){
+   console.log(e);
+ }
+
+ if(code==='581264'){
+   diamonds+=1000;
+   saveGame();
+   alert('🎁 +1000 diamants !');
+ }else if(code==='384921'){
+   aiForced=true; aiDifficulty=1; alert('🤖 IA Niveau 1 forcé');
+ }else if(code==='715846'){
+   aiForced=true; aiDifficulty=2; alert('🤖 IA Niveau 2 forcé');
+ }else if(code==='268593'){
+   aiForced=true; aiDifficulty=3; alert('🤖 IA Niveau 3 forcé');
+ }else if(code==='907314'){
+   aiForced=true; aiDifficulty=4; alert('🤖 IA Niveau 4 forcé');
+ }else if(code==='641875'){
+   aiForced=true; aiDifficulty=5; alert('🔥 IA Niveau 5 EXTREME forcé');
+ }else if(code==='827461'){
+   aiForced=true; aiDifficulty=6; alert('🤖 IA Niveau 6 forcé');
+ }else if(code==='593718'){
+   aiForced=true; aiDifficulty=7; alert('🤖 IA Niveau 7 forcé');
+ }else if(code==='764239'){
+   aiForced=true; aiDifficulty=8; alert('🤖 IA Niveau 8 forcé');
+ }else if(code==='918472'){
+   aiForced=true; aiDifficulty=9; alert('🤖 IA Niveau 9 forcé');
+ }else if(code==='375981'){
+   aiForced=true; aiDifficulty=10; alert('👑 IA Niveau 10 forcé - Bonne chance !');
+ }else if(code==='112358'){
+   aiForced=false;
+   alert('🤖 IA revenue en mode automatique');
+ }else if(code==='742918'){
+   unlocked = Object.keys(allUnits);
+   Object.keys(allUnits).forEach(u=>{ if(!levels[u]) levels[u]=1; });
+   saveGame();
+   renderUnits();
+   alert('🔥 Toutes les unités débloquées !');
+ }else if(code==='684357'){
+   points += 1000;
+   saveGame();
+   alert('🏆 +1000 points !');
+ }else if(code==='951826'){
+   points += 10000;
+   saveGame();
+   alert('👑 +10000 points !');
+ }else if(code==='SUCCESALL'){
+   wins=100;
+   winStreak=50;
+   points=50000;
+   diamonds+=5000;
+   Object.keys(levels).forEach(u=>levels[u]=50);
+   checkAchievements();
+   saveGame();
+   alert('🏅 Tous les succès déblocables ont été validés pour les tests !');
+ }else{
+   alert('❌ Code invalide');
+ }
+}
+
+
+function show(p){
+menu.style.display='none'; units.style.display='none'; gameScreen.style.display='none'; shop.style.display='none';
+if(p==='menu')menu.style.display='block';
+if(p==='units'){units.style.display='block'; renderUnits();}
+if(p==='shop')shop.style.display='block';
+if(p==='game'){gameScreen.style.display='block'; renderSpawnBar();}
+}
+
+const levels={};
+const allUnits={
+knight:{name:'⚔️',cost:3},archer:{name:'🏹',cost:4},giant:{name:'🗿',cost:7},
+dragon:{name:'🐉',cost:10},guardian:{name:'🛡️',cost:4},healer:{name:'💉',cost:5},
+ninja:{name:'🥷',cost:4},kamikaze:{name:'💣',cost:4}
+};
+Object.keys(allUnits).forEach(u=>levels[u]=1);
+allUnits.mage={name:'⚡',cost:6};
+allUnits.sniper={name:'🎯',cost:7};
+allUnits.electromancer={name:'⚡',cost:7};
+allUnits.cryomancer={name:'❄️',cost:7};
+allUnits.pyromancer={name:'🔥',cost:8};
+allUnits.mole={name:'🪱',cost:16,rarity:'Légendaire'};
+const rarities={
+ knight:['⚪','Commun'],archer:['⚪','Commun'],guardian:['⚪','Commun'],
+ healer:['⚪','Commun'],ninja:['⚪','Commun'],kamikaze:['⚪','Commun'],
+ mage:['🔵','Rare'],sniper:['🔵','Rare'],
+ cryomancer:['🟣','Épique'],pyromancer:['🟣','Épique'],
+ electromancer:['🟣','Épique'],dragon:['🟣','Épique'],
+ mole:['🟠','Légendaire'],giant:['🟣','Épique']
+};
+let unlocked=JSON.parse(localStorage.getItem(accKey('unlocked'))||'["knight","archer","giant","dragon","guardian","healer","ninja","kamikaze"]');
+let diamonds=parseInt(localStorage.getItem(accKey('diamonds'))||'0');
+let points=0;
+function saveGame(showMessage=false){
+ localStorage.setItem(accKey('levels'),JSON.stringify(levels));
+ localStorage.setItem(accKey('team'),JSON.stringify(equipped));
+ localStorage.setItem(accKey('points'),points);
+ localStorage.setItem(accKey('diamonds'),diamonds);
+ localStorage.setItem(accKey('unlocked'),JSON.stringify(unlocked));
+ if(showMessage) alert('✅ Sauvegarde effectuée');
+}
+function loadGame(){
+ try{
+  const l=JSON.parse(localStorage.getItem(accKey('levels'))||'null');
+  const t=JSON.parse(localStorage.getItem(accKey('team'))||'null');
+  const p=localStorage.getItem(accKey('points'));
+  if(l) Object.assign(levels,l);
+  if(t) equipped=t;
+  if(p) points=parseInt(p)||0;
+  diamonds=parseInt(localStorage.getItem(accKey('diamonds'))||'0');
+  const uu=JSON.parse(localStorage.getItem(accKey('unlocked'))||'null'); if(uu) unlocked=uu;
+ }catch(e){}
+}
+
+
+let equipped=['knight','archer','giant','dragon','ninja','kamikaze'];
+loadGame(); ensurePseudo();
+
+// Anti-déconnexion corrigé
+if(localStorage.getItem(accKey('in_match'))==='1'){
+  points=Math.max(0, points-30);
+  localStorage.setItem(accKey('in_match'),'0');
+  localStorage.setItem(accKey('points'), points);
+  alert(
+    '⚠️ ABANDON DE PARTIE\n\n' +
+    'Vous avez quitté une partie en cours.\n' +
+    'Pénalité appliquée : -30 points.'
+  );
+}
+
+window.addEventListener('beforeunload', ()=>{
+   if(gameScreen.style.display==='block' && !gameOver){
+      localStorage.setItem(accKey('in_match'),'1');
+   }
+});
+function newGame(){
+ gold=30;
+ enemyGold=30;
+ score=0;
+ gameOver=false;
+ gameResult='';
+ currentAIDeck=aiDecks[Math.floor(Math.random()*aiDecks.length)];
+ moleIntroPlayed=false;
+ moleIntro=0;
+ unitsArr=[];
+ projectiles=[];
+ lightningEffects=[];
+ floatingText=null;
+ crystal=null;
+ selectedLane=0;
+ player.hp=player.maxHp;
+ enemy.hp=enemy.maxHp;
+ show('game');
+ localStorage.setItem(accKey('in_match'),'1');
+}
+
+
+let wins=parseInt(localStorage.getItem(accKey('wins'))||'0');
+let bestScore=parseInt(localStorage.getItem(accKey('bestScore'))||'0');
+let winStreak=parseInt(localStorage.getItem(accKey('winStreak'))||'0');
+let bestWinStreak=parseInt(localStorage.getItem(accKey('bestWinStreak')||'0')||'0');
+
+let losses=parseInt(localStorage.getItem(accKey('losses'))||'0');
+
+
+
+function updateBestScore(){
+ if(points>bestScore){
+   bestScore=points;
+   localStorage.setItem(accKey('bestScore'),bestScore);
+ }
+}
+
+function getLeague(){
+ if(points>=50000) return '👑 Légende';
+ if(points>=15000) return '💎 Diamant';
+ if(points>=5000) return '🥇 Or';
+ if(points>=1000) return '🥈 Argent';
+ return '🥉 Bronze';
+}
+
+function getEstimatedRank(){
+ return Math.max(1,Math.floor(100000/(points+100)));
+}
+
+
+function getTitle(){
+ if(selectedTitle && (selectedTitle==='🥉 Débutant' || unlockedTitles.includes(selectedTitle))) return selectedTitle;
+ if(unlockedAchievements.includes('invincible')) return '👑 Invincible';
+ if(unlockedAchievements.includes('legende')) return '👑 Légende';
+ if(unlockedAchievements.includes('diamant')) return '💎 Diamant';
+ if(unlockedAchievements.includes('or')) return '🥇 Or';
+ if(unlockedAchievements.includes('argent')) return '🥈 Argent';
+ return '🥉 Débutant';
+}
+
+
+function showTitles(){
+ let titles=['🥉 Débutant',...(unlockedTitles||[])];
+ let msg='🎖️ TITRES DISPONIBLES\n\n';
+ titles.forEach((t,i)=>msg+=(i+1)+'. '+t+'\n');
+ let n=parseInt(prompt(msg+'\nChoisis un numéro :'));
+ if(isNaN(n) || n<1 || n>titles.length) return;
+ selectedTitle=titles[n-1];
+ localStorage.setItem(accKey('selectedTitle'),selectedTitle);
+ alert('🎖️ Titre équipé : '+selectedTitle);
+}
+
+function showProfile(){
+ let league=getLeague();
+ let titles=['🥉 Débutant',...(unlockedTitles||[])];
+ let msg='👤 PROFIL\n\n'+
+ 'Titre actuel : '+getTitle()+'\n\n'+
+ getPseudo()+'\n\n'+
+ '🏆 Points : '+points+'\n'+
+ '💎 Diamants : '+diamonds+'\n'+
+ '⚔️ Victoires : '+wins+'\n'+
+ '💀 Défaites : '+losses+'\n'+
+ '🔥 Meilleure série : '+bestWinStreak+'\n'+
+ '⭐ Record : '+bestScore+'\n'+
+ '🏅 Succès : '+achievements+'\n'+
+ 
+ league+'\n\n'+
+ 'Titres débloqués : '+titles.join(', ');
+ alert(msg);
+}
+const SUPABASE_URL='https://ovynviqwspsyohqmgvhn.supabase.co/rest/v1/';
+let achievements=parseInt(localStorage.getItem(accKey('achievements'))||'0');
+
+const unlockedAchievements=JSON.parse(localStorage.getItem(accKey('ach_list')) || '[]');
+let unlockedTitles=JSON.parse(localStorage.getItem(accKey('titles')) || '[]');
+let selectedTitle=localStorage.getItem(accKey('selectedTitle')) || '';
+function grantAchievement(id,name,reward){
+ if(id==='diamant' && !unlockedTitles.includes('💎 Diamant')) unlockedTitles.push('💎 Diamant');
+ if(id==='100wins' && !unlockedTitles.includes('⚔️ Conquérant')) unlockedTitles.push('⚔️ Conquérant');
+ if(id==='invincible' && !unlockedTitles.includes('👑 Invincible')) unlockedTitles.push('👑 Invincible');
+ if(id==='trainer' && !unlockedTitles.includes('🧠 Génie Stratégique')) unlockedTitles.push('🧠 Génie Stratégique');
+ localStorage.setItem(accKey('titles'),JSON.stringify(unlockedTitles));
+ if(unlockedAchievements.includes(id)) return;
+ unlockedAchievements.push(id);
+ localStorage.setItem(accKey('ach_list'),JSON.stringify(unlockedAchievements));
+ achievements=unlockedAchievements.length;
+ localStorage.setItem(accKey('achievements'),achievements);
+
+ let msg='🏅 Succès débloqué : '+name;
+
+ if(id==='diamant' || id==='100wins'){
+   msg+='\n\n📦 Coffre légendaire ouvert !';
+   buyChest(200,true);
+ }else if(id==='streak10'){
+   msg+='\n\n📦 Coffre rare ouvert !';
+   buyChest(80,true);
+   diamonds+=20;
+   msg+='\n💎 +20 diamants';
+ }else if(id==='invincible' || id==='trainer'){
+   msg+='\n🎖️ Titre débloqué';
+ }else{
+   diamonds+=reward;
+   msg+='\n💎 Récompense : '+reward;
+ }
+
+ alert(msg);
+ saveGame();
+}
+
+function unlockAchievement(name){
+  achievements++;
+  localStorage.setItem(accKey('achievements'),achievements);
+  alert('🏅 Succès débloqué : '+name);
+}
+const SUPABASE_PUBLISHABLE_KEY='sb_publishable_hk1X6zDHZt_iVGED6pgrbA_dRHDuLT4';
+
+
+
+
+async function syncSupabase(){
+ try{
+   const pseudo=getPseudo();
+   const tag=localStorage.getItem(accKey('player_tag'))||'';
+
+   const search=await fetch(
+     SUPABASE_URL+'players?tag=eq.'+encodeURIComponent(tag)+'&select=id,pseudo,points,tag,wins,losses,best_score,best_win_streak,achievements,diamonds,title',
+     {headers:{'apikey':SUPABASE_PUBLISHABLE_KEY,'Authorization':'Bearer '+SUPABASE_PUBLISHABLE_KEY}}
+   );
+
+   const rows=await search.json();
+
+   if(rows && rows.length>0){
+      const id=rows[0].id;
+      await fetch(SUPABASE_URL+'players?id=eq.'+id,{
+        method:'PATCH',
+        headers:{
+          'apikey':SUPABASE_PUBLISHABLE_KEY,
+          'Authorization':'Bearer '+SUPABASE_PUBLISHABLE_KEY,
+          'Content-Type':'application/json'
+        },
+        body:JSON.stringify({pseudo:pseudo,points:points,diamonds:diamonds,tag:tag,wins:wins,losses:losses,best_score:bestScore,best_win_streak:bestWinStreak,achievements:achievements,title:getTitle()})
+      });
+   }else{
+      await fetch(SUPABASE_URL+'players',{
+        method:'POST',
+        headers:{
+          'apikey':SUPABASE_PUBLISHABLE_KEY,
+          'Authorization':'Bearer '+SUPABASE_PUBLISHABLE_KEY,
+          'Content-Type':'application/json',
+          'Prefer':'return=minimal'
+        },
+        body:JSON.stringify({pseudo:pseudo,points:points,diamonds:diamonds,tag:tag,wins:wins,losses:losses,best_score:bestScore,best_win_streak:bestWinStreak,achievements:achievements,title:getTitle()})
+      });
+   }
+ }catch(e){
+   alert('❌ Erreur Sync : '+e.message);
+ }
+}
+
+
+
+
+// Synchronisation toutes les 30 minutes supprimée
+
+function checkAchievements(){
+ if(points>=1000) grantAchievement('argent','🥈 Argent',50);
+ if(points>=5000) grantAchievement('or','🥇 Or',150);
+ if(wins>=1) grantAchievement('firstwin','⚔️ Première victoire',20);
+ if(wins>=10) grantAchievement('10wins','🪖 Soldats !',30);
+ if(winStreak>=5) grantAchievement('streak5','🔥 Série de 5',30);
+ if(points>=15000) grantAchievement('diamant','💎 Diamant',700);
+ if(points>=50000) grantAchievement('legende','👑 Légende',1000);
+ if(wins>=100) grantAchievement('100wins','⚔️ Maître de Guerre',700); // 📦 Coffre légendaire
+ if(winStreak>=10) grantAchievement('streak10','🔥 Série de 10',20); // 📦 Coffre rare + 20💎
+ if(winStreak>=50) grantAchievement('invincible','👑 Invincible',1000);
+ let trainerDone=true;
+ ['knight','archer','giant','dragon','guardian','healer','ninja','kamikaze','mage','sniper','electromancer','cryomancer','pyromancer']
+ .forEach(u=>{ if((levels[u]||1)<50) trainerDone=false; });
+ if(trainerDone) grantAchievement('trainer','🧠 Entraîneur',2000);
+
+
+
+
+
+
+ if(points>=5000 && achievements<2){
+   achievements=2;
+   diamonds+=100;
+   localStorage.setItem(accKey('achievements'),achievements);
+ }
+ if(wins>=10 && achievements<3){
+   achievements=3;
+   diamonds+=200;
+   localStorage.setItem(accKey('achievements'),achievements);
+ }
+}
+function showAchievements(){
+ alert(
+'🏅 SUCCÈS\n\n'+
+'🥈 Argent : 1000 points → 50 💎 + Titre Argent\n'+
+'🥇 Or : 5000 points → 150 💎 + Titre Or\n'+
+'💎 Diamant : 15000 points → 📦 Coffre légendaire + Titre Diamant\n'+
+'👑 Légende : 50000 points → 1000 💎 + Titre Légende\n\n'+
+'⚔️ Première victoire → 20 💎\n'+
+'🪖 Soldats ! : 10 victoires → 30 💎\n'+
+'⚔️ Maître de Guerre : 100 victoires → 📦 Coffre légendaire + Titre Conquérant\n\n'+
+'🔥 Série de 5 → 30 💎\n'+
+'🔥 Série de 10 → 📦 Coffre rare + 20 💎\n'+
+'👑 Invincible : 50 victoires d\'affilée → Titre Invincible\n\n'+
+'🧠 Entraîneur : Knight, Archer, Giant, Dragon, Guardian, Healer, Ninja, Kamikaze, Mage, Sniper, Electromancer, Cryomancer et Pyromancer niveau 50 (Taupe non requise) → Titre Génie Stratégique 🎆'
+ );
+}
+
+async function showRanking(){
+ try{
+   const r=await fetch(SUPABASE_URL+'players?select=pseudo,points,wins,losses,best_score,best_win_streak,achievements,diamonds,title&order=points.desc&limit=10',{
+     headers:{
+       'apikey':SUPABASE_PUBLISHABLE_KEY,
+       'Authorization':'Bearer '+SUPABASE_PUBLISHABLE_KEY
+     }
+   });
+   if(!r.ok){ throw new Error('Serveur indisponible'); }
+   const data=await r.json();
+
+   if(!Array.isArray(data)){
+      alert('Erreur Supabase : '+JSON.stringify(data));
+      return;
+   }
+
+   let choix='🏆 TOP 10 MONDIAL\n\n';
+   data.forEach((p,i)=>{
+      choix+=(i+1)+'. '+(p.title||'🥉 Débutant')+' • '+p.pseudo+' ('+p.points+' pts)\n';
+   });
+   choix+='\nTape le numéro du joueur à voir.';
+
+   let n=parseInt(prompt(choix));
+   if(isNaN(n) || n<1 || n>data.length) return;
+
+   let p=data[n-1];
+
+   alert(
+      '👤 PROFIL JOUEUR\n\n'+
+      (p.title||'🥉 Débutant')+'\n'+p.pseudo+'\n\n'+
+      '🏆 Points : '+(p.points||0)+'\n'+'💎 Diamants : '+(p.diamonds||0)+'\n'+
+      '⚔️ Victoires : '+(p.wins||0)+'\n'+
+      '💀 Défaites : '+(p.losses||0)+'\n'+
+      '🔥 Meilleure série : '+(p.best_win_streak||0)+'\n'+
+      '⭐ Record : '+(p.best_score||0)+'\n'+
+      '🏅 Succès : '+(p.achievements||0)+'\n\n'+
+      '⬅️ Retour : clique sur Classement'
+   );
+ }catch(e){
+   alert('🌐 Classement indisponible\n\nVérifie ta connexion internet ou réessaie plus tard.');
+ }
+}
+function renderUnits(){
+teamInfo.innerHTML="Équipe : "+equipped.map(x=>allUnits[x].name+" Lv."+levels[x]).join(" ");
+unitList.innerHTML='';
+Object.keys(allUnits).forEach(k=>{
+ let b=document.createElement('button');
+ const locked=((['mage','sniper','electromancer','cryomancer','pyromancer','mole'].includes(k)) && !unlocked.includes(k));
+ b.textContent=locked && k==='mole' ? '🔒 ??? 🟠 Légendaire' : (locked?'🔒 ':'')+allUnits[k].name+' '+(rarities[k]?rarities[k][0]+' '+rarities[k][1]:'')+' Lv.'+(levels[k]||1)+' 💰'+allUnits[k].cost;
+ if(locked){ b.disabled=true; unitList.appendChild(b); return; }
+ b.className='unitBtn'+(equipped.includes(k)?' active':'');
+ b.onclick=()=>{
+  if(equipped.includes(k)){if(equipped.length>1) equipped=equipped.filter(x=>x!==k);}
+  else if(equipped.length<6) equipped.push(k);
+  renderUnits();
+ };
+ unitList.appendChild(b);
+});
+}
+function renderSpawnBar(){
+spawnBar.innerHTML='';
+equipped.filter(k=>unlocked.includes(k)).forEach(k=>{
+ let b=document.createElement('button');
+ b.textContent=allUnits[k].name+" Lv."+levels[k]+" ("+allUnits[k].cost+"💰)"; b.style.fontSize='24px'; b.style.padding='12px';
+ b.onclick=()=>spawn(k);
+ spawnBar.appendChild(b);
+});
+}
+
+const canvas=document.getElementById('game');
+const ctx=canvas.getContext('2d');
+let gold=30,enemyGold=30,score=0,selectedLane=0,gameOver=false,gameResult='';
+let unitsArr=[],projectiles=[]; let lightningEffects=[];
+let crystal=null, crystals=0; let floatingText=null; let moleIntroPlayed=false; let moleIntro=0;
+
+const player={x:40,y:260,w:90,h:120,hp:1500,maxHp:1500};
+const enemy={x:1070,y:260,w:90,h:120,hp:1500,maxHp:1500};
+
+class Unit{
+constructor(type,team,lane){
+const base={
+// Combattant équilibré (3)
+knight:{hp:150,dmg:9,speed:1.6,range:30,color:'cyan'},
+
+// Distance (4)
+archer:{hp:70,dmg:6,speed:1.0,range:200,color:'yellow'},
+
+// Tank (7)
+giant:{hp:750,dmg:6,speed:0.40,range:35,color:'purple'},
+
+// Boss volant (10)
+dragon:{hp:450,dmg:22,speed:1.3,range:230,color:'red'},
+
+// Défenseur (4)
+guardian:{hp:300,dmg:5,speed:0.7,range:30,color:'steelblue'},
+
+// Soutien (5)
+healer:{hp:100,dmg:0,speed:1.15,range:90,color:'lime'},
+
+// Mage (6)
+mage:{hp:150,dmg:16,speed:1.0,range:180,color:'violet'},
+
+// Sniper (7)
+sniper:{hp:80,dmg:22,speed:0.8,range:320,color:'green'},
+
+// Assassin (4)
+ninja:{hp:80,dmg:14,speed:2.5,range:30,color:'white'},
+
+// Suicide (4)
+kamikaze:{hp:50,dmg:60,speed:1.9,range:30,color:'orange'},
+electromancer:{hp:130,dmg:20,speed:1.0,range:180,color:'cyan'},
+cryomancer:{hp:150,dmg:12,speed:1.0,range:260,color:'lightblue'},
+pyromancer:{hp:120,dmg:18,speed:1.0,range:190,color:'orange'},
+mole:{hp:900,dmg:50,speed:0.9,range:35,color:'black'}
+}[type];
+
+const lv=levels[type]||1;
+this.hp=Math.round(base.hp*(1+0.05*(lv-1)));
+this.maxHp=this.hp;
+this.dmg=base.dmg*(1+0.05*(lv-1));
+this.speed=base.speed; this.range=base.range; this.color=base.color;
+this.type=type; this.team=team; this.lane=lane;
+this.x=team==='player'?180:1020; this.y=lane?435:215; this.cool=0; this.burnTime=0; this.slowTime=0; this.electricTime=0; this.burrow=type==='mole'?120:0; this.burrowCd=360;
+}
+update(){
+if(this.type==='mole'){
+ if(this.burrow>0){
+   this.burrow--;
+   this.x += this.team==='player'?2.5:-2.5;
+
+   let targets=unitsArr.filter(u=>u.team!==this.team && u.lane===this.lane);
+   let priority=['healer','sniper','cryomancer','pyromancer','mage','electromancer'];
+   targets.sort((a,b)=>{
+      let pa=priority.indexOf(a.type); if(pa<0) pa=99;
+      let pb=priority.indexOf(b.type); if(pb<0) pb=99;
+      return pa-pb;
+   });
+
+   let near=targets.find(u=>Math.abs(u.x-this.x)<35);
+   if(!near){
+      let priorityTarget=targets.find(u=>Math.abs(u.x-this.x)<250);
+      if(priorityTarget){
+         this.x += (priorityTarget.x>this.x?5:-5);
+      }
+   }else{
+      this.burrow=0;
+   }
+
+   if(this.burrow===0){
+      unitsArr.forEach(u=>{
+         if(u.team!==this.team && u.lane===this.lane && Math.abs(u.x-this.x)<60){u.hp-=130*(1+0.05*((levels['mole']||1)-1));}
+      });
+   }
+   return;
+ }
+ this.burrowCd--;
+ if(this.burrowCd<=0){ this.burrow=90; this.burrowCd=360; return; }
+}
+let target=unitsArr.find(u=>u!==this&&u.team!==this.team&&u.lane===this.lane&&Math.abs(u.x-this.x)<this.range);
+if(this.type==='giant') target=null;
+
+if(this.type==='healer'){
+ const allies=unitsArr.filter(u=>
+   u!==this &&
+   u.team===this.team &&
+   u.lane===this.lane &&
+   u.hp>0 &&
+   u.type!=='healer'
+ );
+
+ // Soins continus
+ const healPower=0.28*(1+0.05*((levels['healer']||1)-1));
+ allies.forEach(u=>{
+   if(Math.abs(u.x-this.x)<80){
+      u.hp=Math.min(u.maxHp,u.hp+healPower);
+      for(let p=0;p<3;p++){
+        ctx.fillStyle='lime';
+        ctx.fillRect(u.x-10+Math.random()*20,u.y-20+Math.random()*20,2,2);
+      }
+   }
+ });
+
+ // Suivi intelligent
+ if(allies.length){
+   // Ne considère que les alliés relativement proches
+   let nearby = allies.filter(u=>Math.abs(u.x-this.x)<220);
+   if(!nearby.length) nearby = allies.filter(u=>Math.abs(u.x-this.x)<400);
+   if(!nearby.length) nearby = allies;
+
+   let follow = nearby.reduce((a,b)=>{
+      const score = u => {
+        let s = 0;
+        if(u.type==='guardian') s += 40;
+        else if(u.type==='giant') s += 35;
+        s += (1 - u.hp/u.maxHp) * 100; // plus blessé = priorité
+        s -= Math.abs(u.x-this.x)/20;   // pénalité distance
+        return s;
+      };
+      return score(a) > score(b) ? a : b;
+   });
+
+   const desired=this.team==='player' ? follow.x-70 : follow.x+70;
+
+   // zone confortable : ne bouge pas inutilement
+   if(this.x < desired-10) this.x += this.speed;
+   else if(this.x > desired+10) this.x -= this.speed;
+ }
+}
+
+if(this.type==='healer'){ target=null; }
+
+if(target){
+
+
+
+
+
+if(this.type==='cryomancer'){
+
+
+
+
+   let enemies=unitsArr.filter(u=>
+      u!==this &&
+      u.team!==this.team &&
+      u.lane===this.lane &&
+      u.hp>0 &&
+      Math.abs(u.x-this.x)<this.range
+   );
+   if(enemies.length){
+      target=enemies.reduce((a,b)=>
+        Math.abs(a.x-this.x) < Math.abs(b.x-this.x) ? a : b
+      );
+   }
+ }
+ if(this.cool<=0){
+  if(this.type==='kamikaze'){target.hp-=this.dmg; this.hp=0;}
+  else if(['archer','dragon','mage','sniper','electromancer','cryomancer','pyromancer'].includes(this.type)){projectiles.push({x:this.x,y:this.y,target,dmg:this.dmg,sourceType:this.type});}
+  else if(this.dmg>0){target.hp-=this.dmg;}
+  this.cool=(this.type==='pyromancer'?12:20);
+ }
+}else {
+ if(this.type!=='healer'){
+   const moveSpeed=this.slowTime>0?this.speed*0.6:this.speed;
+   this.x+=this.team==='player'?moveSpeed:-moveSpeed;
+ }
+}
+
+const castle=this.team==='player'?enemy:player;
+if(Math.abs(this.x-(castle.x+45))<60 && this.dmg>0 && this.cool<=0){
+ if(this.type==='giant') castle.hp-=18;
+ else if(this.type==='dragon') castle.hp-=14;
+ else if(this.type==='sniper') castle.hp-=12;
+ else if(this.type==='mage') castle.hp-=10;
+ else if(this.type==='electromancer') castle.hp-=10;
+ else if(this.type==='pyromancer') castle.hp-=10;
+ else if(this.type==='ninja') castle.hp-=10;
+ else if(this.type==='knight') castle.hp-=8;
+ else if(this.type==='archer') castle.hp-=4;
+ else if(this.type==='guardian') castle.hp-=4;
+ else if(this.type==='cryomancer') castle.hp-=3;
+ else if(this.type==='mole') castle.hp-=14;
+ else castle.hp-=this.dmg;
+ this.cool=20;
+}
+
+if(this.slowTime>0){
+ for(let i=0;i<4;i++){
+   ctx.fillStyle=i%2?'#99ddff':'#ccffff';
+   ctx.beginPath();
+   ctx.arc(this.x-10+Math.random()*20,this.y-20+Math.random()*25,3,0,6.28);
+   ctx.fill();
+ }
+}
+
+
+if(this.electricTime>0){
+ for(let i=0;i<6;i++){
+   ctx.fillStyle=i%2?'yellow':'cyan';
+   ctx.fillRect(this.x-12+Math.random()*24,this.y-20+Math.random()*30,3,3);
+ }
+}
+
+
+
+
+if(this.burnTime>0){
+
+
+ for(let i=0;i<6;i++){
+   ctx.fillStyle=i%2?'orange':'red';
+   ctx.fillRect(this.x-12+Math.random()*24,this.y-24+Math.random()*30,3,3);
+ }
+ this.burnTime--;
+ this.burnTick=(this.burnTick||0)+1;
+ if(this.burnTick>=30){
+   this.hp-=6;
+   this.burnTick=0;
+ }
+}
+if(this.slowTime>0){ this.slowTime--; }
+if(this.electricTime>0){ this.electricTime--; }
+if(this.cool>0)this.cool--;
+}
+draw(){
+
+if(this.type==='mole'){
+ if(this.burrow>0){
+   ctx.fillStyle='#6b4a2b';
+   ctx.fillRect(this.x-16,this.y+12,32,5);
+   return;
+ }
+
+ // corps
+ ctx.fillStyle='black';
+ ctx.beginPath();
+ ctx.ellipse(this.x,this.y,36,22,0,0,6.28);
+ ctx.fill();
+
+ // dos poilu
+ for(let i=0;i<14;i++){
+   let px=this.x-32+i*4.8;
+   let curve=((i-7)*(i-7))/6;
+   ctx.strokeStyle='#222';
+   ctx.beginPath();
+   ctx.moveTo(px,this.y-18+curve*0.12);
+   ctx.lineTo(px-2,this.y-28+curve*0.15-Math.random()*3);
+   ctx.stroke();
+ }
+
+ // museau
+ ctx.fillStyle='#4a2a12';
+ ctx.beginPath();
+ ctx.ellipse(this.x+34,this.y+2,16,12,0,0,6.28);
+ ctx.fill();
+
+ // nez
+ ctx.fillStyle='#ff99aa';
+ ctx.beginPath();
+ ctx.arc(this.x+44,this.y+2,3,0,6.28);
+ ctx.fill();
+
+ // yeux rouges
+ ctx.fillStyle='red';
+ ctx.fillRect(this.x+18,this.y-10,5,5);
+ ctx.fillRect(this.x+28,this.y-10,5,5);
+
+ // cicatrice
+ ctx.strokeStyle='#bbbbbb';
+ ctx.lineWidth=3;
+ ctx.beginPath();
+ ctx.moveTo(this.x+15,this.y-16);
+ ctx.lineTo(this.x+30,this.y+2);
+ ctx.stroke();
+
+ // griffes avant
+ ctx.strokeStyle='#dddddd';
+ ctx.lineWidth=5;
+ ctx.beginPath();
+ ctx.moveTo(this.x+28,this.y+18);
+ ctx.lineTo(this.x+42,this.y+28);
+ ctx.stroke();
+ ctx.beginPath();
+ ctx.moveTo(this.x+18,this.y+18);
+ ctx.lineTo(this.x+32,this.y+30);
+ ctx.stroke();
+
+ // pattes
+ ctx.fillStyle='#111';
+ ctx.fillRect(this.x-24,this.y+16,10,10);
+ ctx.fillRect(this.x-5,this.y+18,10,10);
+ ctx.fillRect(this.x+15,this.y+18,10,10);
+
+ // queue
+ ctx.strokeStyle='#333';
+ ctx.lineWidth=4;
+ ctx.beginPath();
+ ctx.moveTo(this.x-45,this.y);
+ ctx.lineTo(this.x-62,this.y-8);
+ ctx.stroke();
+
+ return;
+}
+
+if(this.type==='knight'){
+ctx.fillStyle='#c0c0c0';
+ctx.fillRect(this.x-8,this.y-12,16,24);
+ctx.beginPath();ctx.arc(this.x,this.y-20,8,0,Math.PI*2);ctx.fill();
+ctx.fillStyle='#888';ctx.fillRect(this.x-9,this.y-28,18,6);
+ctx.fillStyle=this.team==='player' ? '#2f6fff' : '#cc3333';
+ctx.fillRect(this.x-18,this.y-8,8,16);
+ctx.strokeStyle='#ddd';ctx.lineWidth=3;
+ctx.beginPath();ctx.moveTo(this.x+12,this.y-10);ctx.lineTo(this.x+20,this.y-22);ctx.stroke();
+return;
+}
+
+if(this.type==='archer'){
+if(this.team==='enemy'){ ctx.save(); ctx.translate(this.x*2,0); ctx.scale(-1,1); }
+ctx.fillStyle='#2f8f2f';
+ctx.fillRect(this.x-6,this.y-12,12,24);
+ctx.fillStyle='#f0d0a0';
+ctx.beginPath();ctx.arc(this.x,this.y-20,8,0,Math.PI*2);ctx.fill();
+ctx.strokeStyle='#8b5a2b';ctx.lineWidth=3;
+ctx.beginPath();ctx.arc(this.x+10,this.y-6,10,-1.2,1.2);ctx.stroke();
+ctx.beginPath();ctx.moveTo(this.x+10,this.y-16);ctx.lineTo(this.x+10,this.y+4);ctx.stroke();
+ctx.strokeStyle='white';ctx.lineWidth=1;
+ctx.beginPath();ctx.moveTo(this.x+10,this.y-16);ctx.lineTo(this.x+16,this.y-8);ctx.stroke();
+if(this.team==='enemy'){ ctx.restore(); }
+return;
+}
+
+if(this.type==='giant'){
+ctx.fillStyle='#6a0dad';
+ctx.fillRect(this.x-18,this.y-24,36,48);
+ctx.beginPath();ctx.arc(this.x,this.y-34,12,0,Math.PI*2);ctx.fill();
+ctx.fillStyle='#5a381e';
+ctx.fillRect(this.x+14,this.y-12,10,28);
+return;
+}
+
+if(this.type==='dragon'){
+ctx.save();
+if(this.team==='enemy'){
+  ctx.translate(this.x*2,0);
+  ctx.scale(-1,1);
+}
+ctx.fillStyle='#cc0000';
+
+// queue
+ctx.beginPath();
+ctx.moveTo(this.x-30,this.y);
+ctx.lineTo(this.x-12,this.y-6);
+ctx.lineTo(this.x-12,this.y+6);
+ctx.fill();
+
+// corps
+ctx.beginPath();
+ctx.ellipse(this.x,this.y,20,12,0,0,Math.PI*2);
+ctx.fill();
+
+// ailes gauche
+ctx.beginPath();
+ctx.moveTo(this.x-6,this.y-6);
+ctx.lineTo(this.x-28,this.y-30);
+ctx.lineTo(this.x-10,this.y+2);
+ctx.fill();
+
+// ailes droite
+ctx.beginPath();
+ctx.moveTo(this.x+6,this.y-6);
+ctx.lineTo(this.x+28,this.y-30);
+ctx.lineTo(this.x+10,this.y+2);
+ctx.fill();
+
+// tête
+ctx.beginPath();
+ctx.arc(this.x+22,this.y-4,9,0,Math.PI*2);
+ctx.fill();
+
+// cornes
+ctx.fillStyle='#ffffaa';
+ctx.fillRect(this.x+24,this.y-18,2,6);
+ctx.fillRect(this.x+29,this.y-17,2,6);
+
+// oeil
+ctx.fillStyle='white';
+ctx.fillRect(this.x+25,this.y-7,3,3);
+
+// feu
+ctx.fillStyle='orange';
+ctx.beginPath();
+ctx.moveTo(this.x+32,this.y-1);
+ctx.lineTo(this.x+50,this.y-8);
+ctx.lineTo(this.x+46,this.y);
+ctx.lineTo(this.x+50,this.y+8);
+ctx.fill();
+
+ctx.restore();
+return;
+}
+
+if(this.type==='ninja'){
+ctx.fillStyle='black';
+ctx.fillRect(this.x-8,this.y-14,16,28);
+ctx.fillStyle='#444';
+ctx.fillRect(this.x-10,this.y-16,20,4);
+ctx.fillStyle='white';
+ctx.fillRect(this.x-5,this.y-18,3,3);
+ctx.fillRect(this.x+2,this.y-18,3,3);
+ctx.strokeStyle='silver';
+ctx.lineWidth=2;
+ctx.beginPath();
+ctx.moveTo(this.x+8,this.y-4);
+ctx.lineTo(this.x+18,this.y-14);
+ctx.stroke();
+return;
+}
+
+if(this.type==='guardian'){
+ctx.fillStyle='#4169e1';
+ctx.fillRect(this.x-8,this.y-12,16,24);
+ctx.fillStyle='#d0d0d0';
+ctx.beginPath();
+ctx.arc(this.x,this.y-20,8,0,Math.PI*2);
+ctx.fill();
+ctx.fillStyle='#2040a0';
+ctx.fillRect(this.x-20,this.y-10,10,20);
+ctx.strokeStyle='gold';
+ctx.lineWidth=2;
+ctx.beginPath();
+ctx.moveTo(this.x+10,this.y-12);
+ctx.lineTo(this.x+18,this.y+8);
+ctx.stroke();
+return;
+}
+
+
+if(this.type==='healer'){
+ctx.fillStyle='white';
+ctx.fillRect(this.x-8,this.y-12,16,24);
+ctx.fillStyle='#ffd0d0';
+ctx.beginPath();
+ctx.arc(this.x,this.y-20,8,0,Math.PI*2);
+ctx.fill();
+ctx.fillStyle='red';
+ctx.fillRect(this.x-3,this.y-10,6,18);
+ctx.fillRect(this.x-9,this.y-4,18,6);
+return;
+}
+if(this.type==='electromancer'){
+ctx.fillStyle='#111';
+ctx.fillRect(this.x-9,this.y-13,18,26);
+ctx.fillStyle='cyan';
+ctx.beginPath();ctx.arc(this.x,this.y-20,9,0,Math.PI*2);ctx.fill();
+ctx.strokeStyle='yellow';
+ctx.lineWidth=2;
+ctx.beginPath();ctx.moveTo(this.x-12,this.y-28);ctx.lineTo(this.x-2,this.y-38);ctx.lineTo(this.x+4,this.y-30);ctx.lineTo(this.x+14,this.y-40);ctx.stroke();
+ctx.fillStyle='yellow';
+ctx.fillRect(this.x-2,this.y-8,4,16);
+ctx.fillRect(this.x-8,this.y-2,16,4);
+return;
+}
+
+
+
+if(this.type==='cryomancer'){
+ctx.fillStyle='#88ddff';
+ctx.fillRect(this.x-8,this.y-12,16,24);
+ctx.fillStyle='#e8f8ff';
+ctx.beginPath();ctx.arc(this.x,this.y-20,8,0,Math.PI*2);ctx.fill();
+// couronne de glace
+ctx.fillStyle='#ccffff';
+ctx.beginPath();ctx.moveTo(this.x-10,this.y-30);
+ctx.lineTo(this.x-5,this.y-38);
+ctx.lineTo(this.x,this.y-30);
+ctx.lineTo(this.x+5,this.y-40);
+ctx.lineTo(this.x+10,this.y-30);
+ctx.fill();
+return;
+}
+
+if(this.type==='mage'){
+ctx.fillStyle='#663399';
+ctx.fillRect(this.x-8,this.y-12,16,24);
+ctx.fillStyle='#f0d0a0';
+ctx.beginPath();ctx.arc(this.x,this.y-20,8,0,6.28);ctx.fill();
+
+// chapeau
+ctx.fillStyle='#552288';
+ctx.beginPath();
+ctx.moveTo(this.x-10,this.y-22);
+ctx.lineTo(this.x+10,this.y-22);
+ctx.lineTo(this.x,this.y-42);
+ctx.fill();
+
+// bâton magique
+ctx.strokeStyle='#d4af37';
+ctx.lineWidth=3;
+ctx.beginPath();
+ctx.moveTo(this.x+10,this.y+8);
+ctx.lineTo(this.x+18,this.y-18);
+ctx.stroke();
+
+// orbe
+ctx.fillStyle='yellow';
+ctx.beginPath();ctx.arc(this.x+18,this.y-18,5,0,6.28);ctx.fill();
+return;
+}
+
+if(this.type==='sniper'){
+if(this.team==='enemy'){ ctx.save(); ctx.translate(this.x*2,0); ctx.scale(-1,1); }
+ctx.fillStyle='#556b2f';
+ctx.fillRect(this.x-8,this.y-12,16,24);
+ctx.fillStyle='#f0d0a0';
+ctx.beginPath();
+ctx.arc(this.x,this.y-20,8,0,Math.PI*2);
+ctx.fill();
+ctx.strokeStyle='black';
+ctx.lineWidth=3;
+ctx.beginPath();
+ctx.moveTo(this.x+4,this.y-8);
+ctx.lineTo(this.x+22,this.y-8);
+ctx.stroke();
+if(this.team==='enemy'){ ctx.restore(); }
+return;
+}
+
+if(this.type==='kamikaze'){
+ctx.fillStyle='#aa5500';
+ctx.fillRect(this.x-8,this.y-12,16,24);
+ctx.fillStyle='black';
+ctx.beginPath();
+ctx.arc(this.x,this.y-20,8,0,Math.PI*2);
+ctx.fill();
+ctx.fillStyle='red';
+ctx.beginPath();
+ctx.arc(this.x+12,this.y-4,7,0,Math.PI*2);
+ctx.fill();
+return;
+}
+
+if(this.type==='mage'){
+ctx.fillStyle='#7a3db8';
+ctx.fillRect(this.x-8,this.y-12,16,24);
+ctx.fillStyle='#f0d0a0';
+ctx.beginPath();ctx.arc(this.x,this.y-20,8,0,Math.PI*2);ctx.fill();
+ctx.fillStyle='yellow';
+ctx.beginPath();ctx.arc(this.x+12,this.y-8,5,0,Math.PI*2);ctx.fill();
+return;
+}
+
+if(this.type==='sniper'){
+if(this.team==='enemy'){ ctx.save(); ctx.translate(this.x*2,0); ctx.scale(-1,1); }
+ctx.fillStyle='#556b2f';
+ctx.fillRect(this.x-8,this.y-12,16,24);
+ctx.fillStyle='#f0d0a0';
+ctx.beginPath();ctx.arc(this.x,this.y-20,8,0,Math.PI*2);ctx.fill();
+ctx.strokeStyle='black';
+ctx.lineWidth=3;
+ctx.beginPath();
+ctx.moveTo(this.x+4,this.y-8);
+ctx.lineTo(this.x+24,this.y-8);
+ctx.stroke();
+return;
+}
+
+
+
+if(this.burnTime>0){
+ for(let i=0;i<4;i++){
+   ctx.fillStyle=i%2?'orange':'red';
+   ctx.beginPath();
+   ctx.arc(this.x-10+Math.random()*20,this.y-20+Math.random()*25,3,0,6.28);
+   ctx.fill();
+ }
+}
+if(this.type==='pyromancer'){
+ctx.fillStyle='#2b1a1a'; ctx.fillRect(this.x-6,this.y+10,4,10);
+ctx.fillRect(this.x+2,this.y+10,4,10);
+ctx.fillStyle='#7a0000'; ctx.fillRect(this.x-10,this.y-10,20,24);
+ctx.fillStyle='#990000'; ctx.fillRect(this.x-14,this.y-8,4,12);
+ctx.fillRect(this.x+10,this.y-8,4,12);
+ctx.fillStyle='#f2c18d';
+ctx.beginPath(); ctx.arc(this.x,this.y-20,7,0,6.28); ctx.fill();
+ctx.fillStyle='#ff6600';
+ctx.fillRect(this.x-4,this.y-22,2,2);
+ctx.fillRect(this.x+2,this.y-22,2,2);
+for(let i=0;i<6;i++){
+ ctx.fillStyle=i%2?'orange':'yellow';
+ ctx.beginPath();
+ ctx.moveTo(this.x-12+i*4,this.y-30);
+ ctx.lineTo(this.x-10+i*4,this.y-40);
+ ctx.lineTo(this.x-8+i*4,this.y-30);
+ ctx.fill();
+}
+ctx.strokeStyle='#6b3e12';
+ctx.lineWidth=2;
+ctx.beginPath();
+ctx.moveTo(this.x+10,this.y+5);
+ctx.lineTo(this.x+18,this.y-18);
+ctx.stroke();
+ctx.fillStyle='orange';
+ctx.beginPath();
+ctx.arc(this.x+18,this.y-18,4,0,6.28);
+ctx.fill();
+return;
+}
+
+ctx.fillStyle=this.color;
+ctx.beginPath();
+ctx.arc(this.x,this.y,15,0,6.28);
+ctx.fill();
+}
+}
+
+function spawn(type){
+const cost=allUnits[type].cost;
+if(gold<cost||gameOver)return;
+gold-=cost;
+if(type==='mole' && !moleIntroPlayed){
+   moleIntroPlayed=true;
+   moleIntro=300;
+}
+unitsArr.push(new Unit(type,'player',selectedLane));
+}
+
+let aiDifficulty=1;
+function autoAIDifficulty(){
+ if(points>=30000) return 10;
+ if(points>=23000) return 9;
+ if(points>=17000) return 8;
+ if(points>=12000) return 7;
+ if(points>=8000) return 6;
+ if(points>=5000) return 5;
+ if(points>=3000) return 4;
+ if(points>=1500) return 3;
+ if(points>=500) return 2;
+ return 1;
+}
+let aiForced=false;
+let currentAITeam=null;
+let aiIndex=0;
+let currentAIDeck=null;
+const aiDecks=[
+['mage','cryomancer','electromancer','pyromancer','knight','archer'],
+['giant','healer','dragon','guardian','sniper','cryomancer'],
+['mole','ninja','electromancer','pyromancer','guardian','dragon'],
+['giant','guardian','healer','sniper','dragon','electromancer'],
+['pyromancer','cryomancer','sniper','guardian','dragon','knight']
+];
+setInterval(()=>{
+if(!gameOver){
+ let aiLevel = aiForced ? aiDifficulty : autoAIDifficulty();
+
+ const pools=[
+ ['knight','archer','guardian','giant','dragon'],
+ ['knight','archer','guardian','giant','dragon'],
+ ['knight','archer','guardian','giant','dragon','mage'],
+ ['knight','archer','guardian','giant','dragon','mage','electromancer'],
+ ['knight','archer','guardian','giant','dragon','mage','electromancer','sniper','cryomancer'],
+ ['knight','archer','guardian','giant','dragon','mage','electromancer','sniper','cryomancer','pyromancer','mole']
+ ];
+// IA élevée : préfère les unités rares et légendaires
+if(aiLevel>=8){
+  pools[4]=['dragon','electromancer','sniper','cryomancer','pyromancer','giant','mole'];
+}
+if(aiLevel>=10){
+  pools[4]=['mole','dragon','electromancer','cryomancer','pyromancer','sniper'];
+}
+ const e=pools[Math.min(aiLevel-1,4)];
+ let choice=e[Math.floor(Math.random()*e.length)];
+
+ if(aiLevel>=8){
+   if(!currentAIDeck){
+      currentAIDeck=aiDecks[Math.floor(Math.random()*aiDecks.length)];
+ moleIntroPlayed=false;
+   }
+
+   choice=currentAIDeck[Math.floor(Math.random()*currentAIDeck.length)];
+
+   const playerDragons=unitsArr.filter(u=>u.team==='player' && u.type==='dragon').length;
+   const playerHealers=unitsArr.filter(u=>u.team==='player' && u.type==='healer').length;
+
+   if(playerDragons>=2 && currentAIDeck.includes('sniper')) choice='sniper';
+   if(playerHealers>=2 && currentAIDeck.includes('mole')) choice='mole';
+ }
+ const cost=allUnits[choice]?.cost||3;
+
+ let waves=Math.max(1,aiLevel-2);
+ if(enemyGold>=cost){
+   for(let n=0;n<waves;n++){
+      if(enemyGold<cost) break;
+      enemyGold-=cost;
+      let u=new Unit(choice,'enemy',Math.random()<0.5?0:1);
+      u.hp*=1+(Math.min(aiLevel,10)-1)*0.06;
+      u.maxHp=u.hp;
+      u.dmg*=1+(Math.min(aiLevel,10)-1)*0.06;
+      unitsArr.push(u);
+   }
+ }
+}
+},2500);
+
+setInterval(()=>{
+if(!gameOver){
+ gold=Math.min(200,gold+1);
+ enemyGold=Math.min(500,enemyGold+(aiForced?aiDifficulty:autoAIDifficulty())*0.2+0.8);
+}
+},1000);
+
+// crystal spawn during game
+setInterval(()=>{
+ if(!gameOver && !crystal && Math.random()<0.08){
+   crystal={x:150+Math.random()*900,y:120+Math.random()*350,time:300};
+ }
+},10000);
+
+canvas.addEventListener('click',e=>{
+ if(!crystal) return;
+ const r=canvas.getBoundingClientRect();
+ const x=e.clientX-r.left,y=e.clientY-r.top;
+ if(Math.hypot(x-crystal.x,y-crystal.y)<25){
+   const unit=equipped[Math.floor(Math.random()*equipped.length)];
+   levels[unit]++;
+   crystals++; diamonds+=10; saveGame(); floatingText={x:crystal.x,y:crystal.y,t:60};
+   crystal=null;
+   renderUnits();
+   alert("💎 "+allUnits[unit].name+" passe niveau "+levels[unit]);
+ }
+});
+
+function drawCastle(c,col){
+ctx.fillStyle=col;ctx.fillRect(c.x,c.y,c.w,c.h);
+ctx.fillStyle='red';ctx.fillRect(c.x,c.y-12,c.w,8);
+ctx.fillStyle='lime';ctx.fillRect(c.x,c.y-12,c.w*(c.hp/c.maxHp),8);
+}
+
+function loop(){
+ctx.clearRect(0,0,1200,650);
+
+ctx.fillStyle='#b08d57';
+ctx.fillRect(0,170,1200,90);
+ctx.fillRect(0,390,1200,90);
+
+if(crystal){
+ ctx.fillStyle='cyan';
+ ctx.beginPath();ctx.arc(crystal.x,crystal.y,30,0,6.28);ctx.fill();
+ ctx.fillStyle='black';ctx.fillText('💎',crystal.x-8,crystal.y+4);
+ crystal.time--;
+ if(crystal.time<=0) crystal=null;
+}
+
+if(floatingText){
+ctx.fillStyle='gold';
+ctx.font='24px Arial';
+ctx.fillText('+10 💎',floatingText.x,floatingText.y);
+floatingText.y-=1;
+floatingText.t--;
+if(floatingText.t<=0) floatingText=null;
+}
+drawCastle(player,'blue'); drawCastle(enemy,'darkred');
+
+for(let i=projectiles.length-1;i>=0;i--){
+ let p=projectiles[i];
+ if(!p.target||p.target.hp<=0){projectiles.splice(i,1);continue;}
+ p.x+=(p.target.x-p.x)*0.18; p.y+=(p.target.y-p.y)*0.18;
+ if(p.sourceType==='electromancer'){
+ ctx.fillStyle='rgba(255,255,0,0.40)';
+ ctx.beginPath();
+ ctx.arc(p.target.x,p.target.y,160,0,6.28);
+ ctx.fill();
+ ctx.fillStyle='yellow';
+ ctx.fillRect(p.x-5,p.y-5,10,10);
+}else if(p.sourceType==='cryomancer'){
+ ctx.fillStyle='#bfefff';
+ ctx.beginPath();
+ ctx.moveTo(p.x,p.y-6);
+ ctx.lineTo(p.x+6,p.y);
+ ctx.lineTo(p.x,p.y+6);
+ ctx.lineTo(p.x-6,p.y);
+ ctx.fill();
+ for(let s=0;s<3;s++){ctx.fillRect(p.x-10+Math.random()*20,p.y-10+Math.random()*20,2,2);}
+}else{
+ if(p.sourceType==='pyromancer'){
+ctx.fillStyle='orange';
+ctx.beginPath();ctx.arc(p.x,p.y,6,0,6.28);ctx.fill();
+for(let f=0;f<4;f++){ctx.fillStyle='red';ctx.fillRect(p.x-12-f*3,p.y-2+Math.random()*4,3,3);}
+}else{
+ctx.fillStyle=(p.target && p.target.team==='enemy') ? '#4da6ff' : '#ff5555';
+ctx.fillRect(p.x-3,p.y-3,8,8);
+}
+}
+ if(Math.hypot(p.x-p.target.x,p.y-p.target.y)<8){
+    p.target.hp-=p.dmg;
+    if(p.sourceType==='pyromancer'){ p.target.burnTime=180; p.target.burnTick=0; }
+if(p.sourceType==='cryomancer'){
+ p.target.slowTime=240;
+ for(let k=0;k<8;k++){
+   ctx.fillStyle='#ccffff';
+   ctx.fillRect(p.target.x-15+Math.random()*30,p.target.y-15+Math.random()*30,4,4);
+ }
+ }
+if(p.sourceType==='electromancer'){
+ let near=unitsArr.filter(u=>
+   u!==p.target &&
+   u.team===p.target.team &&
+   u.lane===p.target.lane &&
+   u.hp>0 &&
+   Math.abs(u.x-p.target.x)<160
+ );
+ near.unshift(p.target);
+
+ if(near.length>0){
+   let split=p.dmg/near.length;
+
+   near.forEach((u,idx)=>{
+      u.hp-=split;
+      u.electricTime=45;
+      lightningEffects.push({x1:p.target.x,y1:p.target.y,x2:u.x,y2:u.y,time:20});
+      if(idx>0){
+         let prev=near[idx-1];
+         lightningEffects.push({x1:prev.x,y1:prev.y,x2:u.x,y2:u.y,time:20});
+      }
+
+      // éclairs visibles
+      ctx.strokeStyle='cyan';
+      ctx.lineWidth=2;
+      ctx.beginPath();
+      ctx.moveTo(p.target.x,p.target.y);
+      ctx.lineTo(u.x,u.y);
+      ctx.stroke();
+
+      ctx.strokeStyle='yellow';
+      ctx.beginPath();
+      ctx.moveTo(p.target.x+2,p.target.y-2);
+      ctx.lineTo(u.x+2,u.y-2);
+      ctx.stroke();
+   });
+ }
+}
+    projectiles.splice(i,1);
+ }
+}
+
+
+for(let i=lightningEffects.length-1;i>=0;i--){
+ let e=lightningEffects[i];
+ ctx.strokeStyle='cyan';
+ ctx.lineWidth=3;
+ ctx.beginPath();
+ ctx.moveTo(e.x1,e.y1);
+ ctx.lineTo(e.x2,e.y2);
+ ctx.stroke();
+
+ ctx.strokeStyle='yellow';
+ ctx.lineWidth=1;
+ ctx.beginPath();
+ ctx.moveTo(e.x1+2,e.y1-2);
+ ctx.lineTo(e.x2+2,e.y2-2);
+ ctx.stroke();
+
+ e.time--;
+ if(e.time<=0) lightningEffects.splice(i,1);
+}
+
+for(let i=unitsArr.length-1;i>=0;i--){
+ unitsArr[i].update();
+ unitsArr[i].draw();
+
+ // Barre de vie
+ ctx.fillStyle=(unitsArr[i].team==='player')?'#2255ff':'#cc2222';
+ ctx.fillRect(unitsArr[i].x-18, unitsArr[i].y-44, 36, 6);
+ ctx.fillStyle='red';
+ ctx.fillRect(unitsArr[i].x-16, unitsArr[i].y-42, 32, 4);
+
+ ctx.fillStyle='lime';
+ ctx.fillRect(
+   unitsArr[i].x-16,
+   unitsArr[i].y-42,
+   32 * (unitsArr[i].hp / unitsArr[i].maxHp),
+   4
+ );
+ ctx.fillStyle='white';
+ ctx.font='10px Arial';
+ ctx.fillText('Lv.'+(levels[unitsArr[i].type]||1),unitsArr[i].x-12,unitsArr[i].y-48);
+
+ if(unitsArr[i].hp<=0){
+   if(unitsArr[i].team==='enemy')score++;
+   unitsArr.splice(i,1);
+ }
+}
+
+goldLabel.textContent=gold;
+scoreLabel.textContent=score;
+let aiLevel = aiForced ? aiDifficulty : autoAIDifficulty();
+let txt='Simple';
+if(aiLevel>=2) txt='Facile';
+if(aiLevel>=4) txt='Moyen';
+if(aiLevel>=6) txt='Difficile';
+if(aiLevel>=8) txt='Bonne chance';
+if(aiLevel>=10) txt='Impossible';
+let aiLab=document.getElementById('aiLabel');
+if(aiLab) aiLab.textContent=txt+' (IA '+aiLevel+')';
+crystalLabel.textContent=crystals; if(pointsLabel) pointsLabel.textContent=points; if(diamondsLabel) diamondsLabel.textContent='💎 '+diamonds; let gd=document.getElementById('gameDiamonds'); if(gd) gd.textContent='💎 '+diamonds;
+
+if(!gameOver && (player.hp<=0||enemy.hp<=0)){
+ gameOver=true;
+ if(enemy.hp<=0){ wins++; winStreak++; if(winStreak>bestWinStreak){bestWinStreak=winStreak; localStorage.setItem(accKey('bestWinStreak'),bestWinStreak);} localStorage.setItem(accKey('wins'),wins); localStorage.setItem(accKey('winStreak'),winStreak); if(points>bestScore){bestScore=points; localStorage.setItem(accKey('bestScore'),bestScore);} gameResult='🏆 VICTOIRE !'; points += 100 + score; diamonds += 5; if(points>=1000 && achievements===0) unlockAchievement('Premier palier 1000 points'); localStorage.setItem(accKey('in_match'),'0'); saveGame(); setTimeout(()=>syncSupabase(),500); }
+ else { losses++; winStreak=0; localStorage.setItem(accKey('losses'),losses); localStorage.setItem(accKey('winStreak'),winStreak); gameResult='💀 DEFAITE !'; points = Math.max(0, points-30); localStorage.setItem(accKey('in_match'),'0'); setTimeout(()=>syncSupabase(),500); }
+ saveGame();
+}
+updateBestScore();
+if(accountLabel) accountLabel.textContent=currentAccount; let pp=document.getElementById('pseudoLabel'); if(pp) pp.textContent=(getTitle()+' • '+getPseudo()); let ll=document.getElementById('leagueLabel'); if(ll) ll.textContent='Ligue : '+getLeague(); let rr=document.getElementById('rankLabel'); if(rr) rr.textContent='';
+if(gameOver){
+ ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,1200,650);
+ ctx.fillStyle='gold'; ctx.font='80px Arial'; ctx.fillText(gameResult,250,250);
+
+ ctx.font='32px Arial';
+ ctx.fillText('Points : '+points,470,320);
+ ctx.fillText('Diamants : '+diamonds,470,360);
+
+ ctx.fillStyle='#444';
+ ctx.fillRect(380,420,180,60);
+ ctx.fillRect(650,420,180,60);
+
+ ctx.fillStyle='white';
+ ctx.font='28px Arial';
+ ctx.fillText('🔄 Rejouer',400,460);
+ ctx.fillText('🏠 Menu',690,460);
+}
+
+
+if(moleIntro>0){
+ ctx.fillStyle='rgba(0,0,0,0.99)';
+
+ ctx.fillRect(0,0,1200,650);
+
+ let p=(240-moleIntro)/240;
+
+// brouillard rouge animé
+for(let i=0;i<40;i++){
+ ctx.fillStyle='rgba(255,0,0,'+(0.02+Math.random()*0.03)+')';
+ ctx.fillRect((i*35+p*500)%1200,Math.sin(i+p*10)*40+i*15,120,8);
+}
+
+ let shake=(p>0.7?Math.sin(moleIntro*0.8)*(10+40*p):0);
+
+ ctx.save();
+ ctx.translate(600+shake,320);
+
+ let scale=0.4+p*6.5;
+ ctx.scale(scale,scale);
+
+ // PHASE 1 : dos
+ if(p<0.33){
+   ctx.fillStyle='#111';
+   ctx.fillRect(-110,-50,220,100);
+   ctx.fillRect(-70,-75,140,35);
+   ctx.fillStyle='#222';
+   for(let i=0;i<25;i++) ctx.fillRect(-75+i*6,-85,3,12);
+ }
+
+ // PHASE 2 : rotation
+ else if(p<0.66){
+   let r=(p-0.33)/0.33;
+   ctx.fillStyle='#111';
+   ctx.fillRect(-110,-50,220,100);
+   ctx.fillRect(-70,-75,140,35);
+   ctx.fillStyle='#4a2a12';
+   ctx.fillRect(40*r,-15,55*r,35);
+
+   let ex=20*r;
+   for(let t=0;t<10;t++){
+      ctx.fillStyle='rgba(255,0,0,'+(0.18-t*0.015)+')';
+      ctx.fillRect(ex-t*10,-25,16,8);
+   }
+   ctx.fillStyle='red';
+   ctx.fillRect(ex,-25,12,12);
+ }
+
+ // PHASE 3 : face + yeux ouverts
+ else{
+   ctx.fillStyle='#111';
+   ctx.fillRect(-110,-50,220,100);
+   ctx.fillRect(-70,-75,140,35);
+   ctx.fillStyle='#4a2a12';
+   ctx.fillRect(70,-15,60,40);
+
+   let glow=180+Math.sin(moleIntro*0.5)*70;
+
+   for(let t=0;t<12;t++){
+      ctx.fillStyle='rgba(255,0,0,'+(0.2-t*0.015)+')';
+      ctx.fillRect(20-t*12,-28,18,10);
+      ctx.fillRect(65-t*12,-28,18,10);
+   }
+
+   
+// halo pulsant
+for(let h=0;h<8;h++){
+ ctx.fillStyle='rgba(255,0,0,'+(0.08-h*0.01)+')';
+ ctx.fillRect(10-h*4,-38-h*2,38+h*8,38+h*4);
+ ctx.fillRect(55-h*4,-38-h*2,38+h*8,38+h*4);
+}
+ctx.fillStyle='rgb('+glow+',0,0)';
+
+   ctx.fillRect(20,-28,18,18);
+   ctx.fillRect(65,-28,18,18);
+
+   ctx.strokeStyle='rgba(255,0,0,0.8)';
+   ctx.lineWidth=4;
+   ctx.beginPath();
+   ctx.moveTo(10,-40);
+   ctx.lineTo(55,10);
+   ctx.stroke();
+
+   for(let d=0;d<15;d++){
+      ctx.fillStyle='rgba(255,0,0,'+(0.15-d*0.008)+')';
+      ctx.fillRect(20-d*10,-28,18,18);
+      ctx.fillRect(65-d*10,-28,18,18);
+   }
+
+   ctx.fillStyle='#ddd';
+   
+// griffes géantes
+ctx.fillRect(95,40,28,8);
+ctx.fillRect(130,55,30,8);
+
+// mâchoire
+ctx.fillStyle='#2a1208';
+ctx.fillRect(78,18,50,18);
+
+// poussière
+for(let k=0;k<25;k++){
+ ctx.fillStyle='rgba(180,120,80,0.25)';
+ ctx.fillRect(-120+Math.random()*240,45+Math.random()*40,4,4);
+}
+
+   ctx.fillRect(115,52,18,6);
+ }
+ ctx.restore();
+
+ ctx.fillStyle='red';
+ ctx.font='bold 64px Arial';
+ ctx.fillText('🪱 LA TAUPE ANCESTRALE',170,100);
+
+ if(p<0.33){
+   ctx.fillStyle='white';
+   ctx.fillText('Une présence vous observe...',220,180);
+for(let e=0;e<2;e++){
+  ctx.fillStyle='rgba(255,0,0,'+(0.3+p)+')';
+  ctx.fillRect(520+e*120,260,18,18);
+}
+ }else if(p<0.66){
+   ctx.fillStyle='red';
+   ctx.fillText('Elle se retourne...',300,180); for(let i=0;i<20;i++){ctx.fillStyle='rgba(255,0,0,0.15)'; ctx.fillRect(150+i*40,250+Math.sin(i+p*20)*20,25,3);}
+ }else{
+   ctx.fillStyle='orange';
+   ctx.fillText('ELLE FONCE SUR VOUS !',360,180);
+for(let i=0;i<60;i++){
+ ctx.fillStyle='rgba(255,255,255,0.08)';
+ ctx.fillRect(Math.random()*1200,Math.random()*650,3,3);
+}
+
+
+if(p>0.75){
+ for(let i=0;i<80;i++){
+   ctx.fillStyle='rgba(255,255,255,0.12)';
+   ctx.fillRect(Math.random()*1200,Math.random()*650,2,2);
+ }
+}
+if(p>0.85){
+
+ ctx.fillStyle='rgba(255,0,0,'+((p-0.85)*6)+')';
+ ctx.fillRect(0,0,1200,650);
+}
+
+ }
+
+ moleIntro--;
+ checkAchievements(); requestAnimationFrame(loop);
+ return;
+}
+
+
+requestAnimationFrame(loop);
+}
+renderUnits(); loop();
+
+canvas.addEventListener('click',function(e){
+ if(!gameOver) return;
+ const r=canvas.getBoundingClientRect();
+ const x=e.clientX-r.left;
+ const y=e.clientY-r.top;
+
+ if(x>=380 && x<=560 && y>=420 && y<=480){
+   newGame();
+ }
+
+ if(x>=650 && x<=830 && y>=420 && y<=480){
+   show('menu');
+ }
+});
+
+function buyChest(cost,freeChest=false){
+ if(!freeChest && diamonds<cost){shopReward.innerHTML='❌ Pas assez de diamants';return;}
+ if(!freeChest) diamonds-=cost;
+ let reward='📦 ';
+ let keys=Object.keys(levels);
+ let u=keys[Math.floor(Math.random()*keys.length)];
+ let gain;
+
+ if(cost>=200){
+   gain=2+Math.floor(Math.random()*4); // 2 à 5 niveaux garantis
+ }else if(cost>=80){
+   gain=1+Math.floor(Math.random()*3); // 1 à 3
+ }else{
+   gain=1; // minimum 1
+ }
+
+ levels[u]=(levels[u]||1)+gain;
+ reward+=allUnits[u].name+' +'+gain+' niveaux ';
+ // Chance spéciale Taupe
+ if(!unlocked.includes('mole')){
+   const moleChance = cost>=200 ? 0.02 : (cost>=80 ? 0.005 : 0);
+   if(Math.random()<moleChance){
+      unlocked.push('mole');
+      levels['mole']=1;
+      reward+=' 🪱 TAUPE LÉGENDAIRE DÉBLOQUÉE !';
+   }
+ }
+
+ if(Math.random()<(cost>=200?0.9:0.4)){
+   let locked=['mage','sniper','electromancer','cryomancer','pyromancer'].filter(x=>!unlocked.includes(x));
+   if(locked.length){
+      let nu=locked[Math.floor(Math.random()*locked.length)];
+      unlocked.push(nu);
+      levels[nu]=1;
+      reward+=' 🆕 '+nu+' débloqué';
+   }
+ }
+ shopReward.innerHTML='✅ Achat effectué et sauvegardé !<br><br>'+reward;
+ saveGame();
+ renderUnits();
+
+}
+</script>
+</body>
+</html>
+<!-- V208 : récompenses succès supplémentaires -->
