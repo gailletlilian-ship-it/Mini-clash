@@ -838,7 +838,14 @@ this.hp=Math.round(base.hp*(1+0.15*(lv-1)));
 this.maxHp=this.hp;
 this.dmg=base.dmg*(1+0.15*(lv-1));
 this.speed=base.speed; this.range=base.range; this.color=base.color;
-this.level=lv; this.type=type; this.team=team; this.lane=lane; this.charge=0;
+this.level=lv;
+this.type=type;
+this.team=team;
+this.lane=lane;
+
+this.charge=0;
+this.chargeSpeed=1;
+this.lastTarget=null;
 this.x=team==='player'?180:1020; this.y=lane?435:215; this.cool=0; this.burnTime=0; this.slowTime=0; this.electricTime=0; this.burrow=type==='mole'?120:0; this.burrowCd=360;
 }
 update(){
@@ -875,8 +882,25 @@ if(this.type==='mole'){
  this.burrowCd--;
  if(this.burrowCd<=0){ this.burrow=90; this.burrowCd=360; return; }
 }
-if(this.type==='cavalier'){this.charge=Math.min((this.charge||0)+1,120);} 
+if(this.type==='cavalier'){
+    this.chargeSpeed=Math.min(2.0,1+(this.charge/120));
+}
 let target=unitsArr.find(u=>u!==this&&u.team!==this.team&&u.lane===this.lane&&Math.abs(u.x-this.x)<this.range);
+	if(this.type==='cavalier'){
+
+    if(target!==this.lastTarget){
+        this.charge=0;
+        this.chargeSpeed=1;
+    }
+
+    this.lastTarget=target;
+
+    if(!target){
+        this.charge=0;
+        this.chargeSpeed=1;
+    }
+
+	}
 if(this.type==='giant') target=null;
 
 if(this.type==='healer'){
@@ -956,13 +980,39 @@ if(this.type==='cryomancer'){
  if(this.cool<=0){
   if(this.type==='kamikaze'){target.hp-=this.dmg; this.hp=0;}
   else if(['archer','dragon','mage','sniper','electromancer','cryomancer','pyromancer'].includes(this.type)){projectiles.push({x:this.x,y:this.y,target,dmg:this.dmg,sourceType:this.type});}
-  else if(this.dmg>0){let dmg=this.dmg; if(this.type==='cavalier' && (this.charge||0)>45){dmg*=2; this.charge=0;} target.hp-=dmg;}
+  else if(this.dmg>0){
+
+    let dmg=this.dmg;
+
+    if(this.type==='cavalier'){
+
+        let bonus=1+this.charge/60;
+
+        if(bonus>3){
+            bonus=3;
+        }
+
+        dmg*=bonus;
+
+        this.charge=0;
+        this.chargeSpeed=1;
+    }
+
+    target.hp-=dmg;
+		}
   this.cool=(this.type==='pyromancer'?12:20);
  }
 }else {
- if(this.type!=='healer'){
-   const moveSpeed=this.slowTime>0?this.speed*0.6:this.speed;
-   this.x+=this.team==='player'?moveSpeed:-moveSpeed;
+ if(this.type!=='healer')
+		let moveSpeed=this.slowTime>0?this.speed*0.6:this.speed;
+
+if(this.type==='cavalier'){
+    this.charge=Math.min(this.charge+1,120);
+    this.chargeSpeed=Math.min(2,1+this.charge/120);
+    moveSpeed*=this.chargeSpeed;
+}
+
+this.x+=this.team==='player'?moveSpeed:-moveSpeed;
  }
 }
 
